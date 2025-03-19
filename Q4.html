@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .bar {
+            stroke: #333;
+            stroke-width: 1px;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid #999;
+            padding: 8px;
+            font-size: 12px;
+            pointer-events: none;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        .label {
+            font-size: 14px;
+            text-anchor: middle;
+            fill: #000;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; overflow: hidden; }
+        .bar { stroke: #333; stroke-width: 1px; }
+        .tooltip {
+            position: absolute; background: white; border: 1px solid #999;
+            padding: 8px; font-size: 12px; pointer-events: none; border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2); opacity: 0; transition: opacity 0.2s;
+        }
+        .label { font-size: 14px; text-anchor: middle; fill: black; font-weight: bold; }
+        .chart-container { width: 100vw; height: 80vh; }
+    </style>
+</head>
+<body>
+    <h3 style="text-align:center; font-size: 24px; color: blue;">Doanh thu trung bình theo Ngày</h3>
+    <div class="chart-container"><svg id="chart"></svg></div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        function drawChart() {
+            const container = document.querySelector(".chart-container");
+            const width = container.clientWidth * 0.95, height = container.clientHeight * 0.9;
+            const margin = {top: 40, right: 40, bottom: 50, left: 120};
+
+            d3.select("#chart").selectAll("*").remove();
+            const svg = d3.select("#chart")
+                .attr("viewBox", `0 0 ${width} ${height}`)
+                .attr("preserveAspectRatio", "xMidYMid meet");
+
+            const tooltip = d3.select("#tooltip");
+
+            d3.csv("data_ggsheet.csv").then(data => {
+                const parseDate = d3.timeParse("%Y-%m-%d %H:%M:%S"),
+                    formatWeekday = d3.timeFormat("%w"), 
+                    weekdayNames = {1: "Thứ 2", 2: "Thứ 3", 3: "Thứ 4", 4: "Thứ 5", 5: "Thứ 6", 6: "Thứ 7", 0: "Chủ Nhật"},
+                    weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+
+                data.forEach(d => {
+                    d.date = parseDate(d["Thời gian tạo đơn"]);
+                    d.Thu = d.date ? +formatWeekday(d.date) : -1;  
+                    d["Thành tiền"] = +d["Thành tiền"];
+                    d["SL"] = +d["SL"];
+                });
+
+                const groupedData = d3.rollup(
+                    data, v => ({
+                        TongDoanhThu: d3.sum(v, d => d["Thành tiền"]),
+                        TongSL: d3.sum(v, d => d["SL"]),
+                        SoLanXuatHien: new Set(v.map(d => d.date.toISOString().split("T")[0])).size
+                    }),
+                    d => d.Thu
+                );
+
+                const doanhThuTrungBinh = weekdayOrder.map(Thu => ({
+                    Thu,
+                    NgayTrongTuan: weekdayNames[Thu],
+                    DoanhThuTrungBinh: groupedData.get(Thu) ? groupedData.get(Thu).TongDoanhThu / groupedData.get(Thu).SoLanXuatHien : 0,
+                    SoLuongTrungBinh: groupedData.get(Thu) ? groupedData.get(Thu).TongSL / groupedData.get(Thu).SoLanXuatHien : 0
+                }));
+
+                const color = d3.scaleOrdinal().domain(doanhThuTrungBinh.map(d => d.NgayTrongTuan)).range(d3.schemeSet3);
+                const x = d3.scaleBand().domain(doanhThuTrungBinh.map(d => d.NgayTrongTuan)).range([margin.left, width - margin.right]).padding(0.2);
+                const y = d3.scaleLinear().domain([0, d3.max(doanhThuTrungBinh, d => d.DoanhThuTrungBinh) * 1.2]).nice().range([height - margin.bottom, margin.top]);
+
+                svg.append("g").attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x)).selectAll("text")
+                    .attr("dy", "10px").style("font-size", "14px");
+
+                svg.append("g").attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(7).tickFormat(d => d + " VND"))
+                    .selectAll("text").style("font-size", "14px");
+
+                svg.selectAll(".bar").data(doanhThuTrungBinh).enter().append("rect")
+                    .attr("class", "bar")
+                    .attr("x", d => x(d.NgayTrongTuan))
+                    .attr("y", d => y(d.DoanhThuTrungBinh))
+                    .attr("width", x.bandwidth())
+                    .attr("height", d => height - margin.bottom - y(d.DoanhThuTrungBinh))
+                    .attr("fill", d => color(d.NgayTrongTuan))
+                    .on("mouseover", function(event, d) {
+                        d3.select(this).attr("opacity", 0.7);
+                        tooltip.html(`<strong>${d.NgayTrongTuan}</strong><br>Doanh thu: ${d.DoanhThuTrungBinh.toFixed(0)} VND<br>Số lượng: ${d.SoLuongTrungBinh.toFixed(0)} SKUs`)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 28) + "px")
+                            .style("opacity", 1);
+                    })
+                    .on("mouseout", function() {
+                        d3.select(this).attr("opacity", 1);
+                        tooltip.style("opacity", 0);
+                    });
+
+                svg.selectAll(".label").data(doanhThuTrungBinh).enter().append("text")
+                    .attr("class", "label")
+                    .attr("x", d => x(d.NgayTrongTuan) + x.bandwidth() / 2)
+                    .attr("y", d => y(d.DoanhThuTrungBinh) - 5)
+                    .attr("text-anchor", "middle")
+                    .text(d => d.DoanhThuTrungBinh.toFixed(0) + " VND");
+            });
+        }
+
+        drawChart();
+        window.addEventListener("resize", drawChart);
+    </script>
+</body>
+</html>
